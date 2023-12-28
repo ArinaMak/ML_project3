@@ -91,3 +91,134 @@ y_pred_test = sklearn_model.predict(X_test)
 plot_two_ys(y_pred_test,  y_test, "y_pred_test", "y_test")
 
 """Видим, что модель на тестовой выборке показывает себя чуть хуже, но все равно работает достаточно точно."""
+
+
+
+
+
+
+
+
+
+"""# Получение конкретных значений"""
+
+!pip install pytesseract                # т.к. pytesseract нет в google colab
+!apt install tesseract-ocr-rus          # для русского языка
+
+import pytesseract                    # для чтения текста с картинок
+#from PIL import Image
+import cv2                            # для работы с картинками
+from google.colab.patches import cv2_imshow
+
+config = r'--oem 3 --psm 6'           # для наибольшей точности считывания текста с картинок
+pytesseract.pytesseract.tesseract_cmd = ( r'/usr/bin/tesseract')
+
+uploaded1 = files.upload()
+
+import re                           # библиотека для регулярных выражений
+
+def text_preprocessing(str):        # предобработка текста с картинки - вычленение информации о белках, жирах, углеводах и калорийности
+  arr_info=[0,0,0,0]
+
+  match = re.search(r'\bбелк[аио]?в?\s?[—-]?\s?[0123456789]+[,.\s]?[0123456789]', str, re.IGNORECASE)           # выделяем белки
+  if match:
+    tmp_str_match=re.search(r'\b[0123456789]+[,.\s]?[0123456789]', match[0], re.IGNORECASE)
+    tmp_str=tmp_str_match[0].replace(",",".")
+    arr_info[0]=float(tmp_str)
+
+  match = re.search(r'\bжир[аыов]?\s?[—-]?\s?[0123456789]+[,.\s]?[0123456789]', str, re.IGNORECASE)             # выделяем жиры
+  if match:
+    tmp_str_match=re.search(r'\b[0123456789]+[,.\s]?[0123456789]', match[0], re.IGNORECASE)
+    tmp_str=tmp_str_match[0].replace(",",".")
+    arr_info[1]=float(tmp_str)
+
+  match = re.search(r'\b[жи]?р[аыов]?\s?[—-]?\s?[0123456789]+[,.\s]?[0123456789]', str, re.IGNORECASE)          # выделяем жиры
+  if match:
+    tmp_str_match=re.search(r'\b[0123456789]+[,.\s]?[0123456789]', match[0], re.IGNORECASE)
+    tmp_str=tmp_str_match[0].replace(",",".")
+    arr_info[1]=float(tmp_str)
+
+  match = re.search(r'\bуглевод[ыо]?в?\s?[—-]?\s?[0123456789]+[,.\s]?[0123456789]', str, re.IGNORECASE)        # выделяем углеводы
+  if match:
+    tmp_str_match=re.search(r'\b[0123456789]+[,.\s]?[0123456789]', match[0], re.IGNORECASE)
+    tmp_str=tmp_str_match[0].replace(",",".")
+    arr_info[2]=float(tmp_str)
+
+  match = re.search(r'[\d]+(.[\d]+)?\sккал', str, re.IGNORECASE)                                              # выделяем калорийность
+  if match:
+    tmp_str_match=re.search(r'[\d]+(.[\d]+)?', match[0], re.IGNORECASE)
+    tmp_str=tmp_str_match[0].replace(",",".")
+    arr_info[3]=float(tmp_str)
+
+  return arr_info
+
+def image_recognition(img_name):                                  # предобработка текста с фотографии продукта. Фотография рассматривается в rgb, gray и white-black цветах для достижения наибольшей точности
+  img_info=[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+  img=[0,0,0]
+  img_text=["","",""]
+  img_info_res=[0, 0, 0, 0]
+
+  img[0]=cv2.imread(img_name)
+  img[1]=cv2.imread(img_name, cv2.IMREAD_GRAYSCALE)
+  (thresh, img[2]) = cv2.threshold(img[1], 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+  #numpy_horizontal_concat = np.concatenate((img[0], img[0]), axis=1)                # наглядное представление, какие картинки мы получаем
+  #cv2_imshow(numpy_horizontal_concat)
+  #numpy_horizontal_concat = np.concatenate((img[1], img[2]), axis=1)
+  #cv2_imshow(numpy_horizontal_concat)
+
+  for i in range(3):
+    img_text[i]=pytesseract.image_to_string(img[i], lang='rus', config=config)      # получаем текст с картинки
+    img_info[i]=text_preprocessing(img_text[i])                 # получаем информацию по данной фотографии белки-жиры-углеводы-калорийность
+
+    for j in range(4):
+      if img_info[i][j]!=0:
+        img_info_res[j]=img_info[i][j]                          # итоговые значения собираются со всех трех вариантов картинки
+
+  return img_info_res
+
+def data_normalization(img_info, days, human_characteristics):            # нормализация данных
+
+  cols_names = ['Proteins (g)', 'Fats (g)', 'Carbohydrates (g)', 'Calories',
+       'Days until the end of the shelf life', 'Weight (kg)', 'Height (cm)',
+       'Age', 'Individual intolerance', '2', '3', '4']
+
+  data=[img_info[0], img_info[1], img_info[2], img_info[3], days, human_characteristics[0], human_characteristics[1], human_characteristics[2], human_characteristics[4], 0, 0, 0]
+
+  if(human_characteristics[3]==2):                                        # вручную забиваем параметры телосложения
+    data[9]=1
+  elif human_characteristics[3]==3:
+    data[10]=1
+  elif human_characteristics[3]==3:
+    data[11]=1
+
+  df = pd.DataFrame([data], columns=cols_names)                           # преобразуем наши данные к удобному типу
+
+  cols_to_scale = ['Proteins (g)', 'Fats (g)', 'Carbohydrates (g)',
+                 'Calories', 'Days until the end of the shelf life',
+                 'Weight (kg)', 'Height (cm)', 'Age']
+
+  df[cols_to_scale] = scaler.transform(df[cols_to_scale])                 # нормализация
+  df.columns = df.columns.map(str)                                        # приведем все названия колонок к строковому формату
+  X_tmp = df.values
+
+  return X_tmp
+
+def decision(img_name, days, human_characteristics):
+
+  img_info = image_recognition(img_name)                                  # получаем необходимые данные с картинки
+
+  for i in range(4):                                                      # если не удалось прочитать данные с фото, берем среднее из нашей обученной модели
+    if(img_info[i]==0):
+      img_info[i]=scaler.mean_[i]
+
+  X_res = data_normalization(img_info, days, human_characteristics)       # нормализуем значения
+
+  y_pred_res = sklearn_model.predict(X_res)                               # получаем ответ на вопрос "полезен ли конкретный продукт для конкретного человека"
+
+  return y_pred_res
+
+#image_recognition('milk9.jpg')
+#data_normalization(image_recognition('milk1.jpg'), 5, [65, 175, 15, 1, 0])
+#decision('milk9.jpg', 7, [95, 165, 15, 4, 0])
+decision('milk1.jpg', 7, [62, 158, 89, 4, 0])
